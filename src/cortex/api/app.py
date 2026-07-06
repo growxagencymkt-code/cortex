@@ -16,14 +16,32 @@ from fastapi.responses import HTMLResponse
 from pydantic import BaseModel, Field
 
 from cortex import __version__
+from cortex.agents.candidates import mail_responder_spec
+from cortex.api.service import MemoryService
 from cortex.events.models import EventIn
+from cortex.orchestrator.panels import (
+    agents_panel,
+    build_decision_inbox,
+    card_to_api,
+    commitments_panel,
+    economy_panel,
+    operative_map_panel,
+)
 from cortex.events.store import postgres_store_from_dsn
-from cortex.memory.retrieval import RetrievalResult, answer_query
+from cortex.extraction.providers import build_inference_client
+from cortex.memory.answer import GroundedAnswer, answer_from_retrieval
+from cortex.memory.retrieval import RetrievalResult
 from cortex.settings import Settings, get_settings
 
 
 class RetrieveRequest(BaseModel):
     """Cuerpo de POST /api/retrieve."""
+
+    query: str
+
+
+class ChatRequest(BaseModel):
+    """Cuerpo de POST /api/chat."""
 
     query: str
 
@@ -89,13 +107,16 @@ _STATUS_PAGE = """<!doctype html>
     <div class="card"><div class="k">Pipeline</div><div class="v" id="pipe">…</div></div>
     <div class="card"><div class="k">Base de datos</div><div class="v" id="db">…</div></div>
   </div>
-  <div class="phase">Fase actual <b>F0/F1</b> — backend vivo (log de eventos, memoria con evidencia, API de salud).
-  La interfaz de operador (chat, bandeja de decisiones y paneles — §11) llega en <b>F2/F4</b>.</div>
+  <div class="phase">Fases <b>F0–F4</b> vivas — log de eventos, memoria con evidencia, recuperación
+  híbrida, chat fundamentado, bandeja de decisiones y paneles (§8, §11). Generación con proveedor
+  configurable (NVIDIA NIM / compatible OpenAI); sin proveedor, respuesta extractiva $0.</div>
   <div class="api">
     <div class="row"><span class="m">GET</span><span class="p">/health</span><span class="st live">vivo</span></div>
-    <div class="row"><span class="m">POST</span><span class="p">/api/chat</span><span class="st">F2 · 501</span></div>
-    <div class="row"><span class="m">GET</span><span class="p">/api/inbox</span><span class="st">F4 · 501</span></div>
-    <div class="row"><span class="m">GET</span><span class="p">/api/panels/{'{'}panel{'}'}</span><span class="st">F2/F4 · 501</span></div>
+    <div class="row"><span class="m">POST</span><span class="p">/api/retrieve</span><span class="st live">recuperación</span></div>
+    <div class="row"><span class="m">POST</span><span class="p">/api/chat</span><span class="st live">respuesta fundamentada</span></div>
+    <div class="row"><span class="m">POST</span><span class="p">/api/ingest/meeting</span><span class="st live">ingesta</span></div>
+    <div class="row"><span class="m">GET</span><span class="p">/api/inbox</span><span class="st live">decisiones</span></div>
+    <div class="row"><span class="m">GET</span><span class="p">/api/panels/{'{'}panel{'}'}</span><span class="st live">paneles</span></div>
     <div class="row"><span class="m">GET</span><span class="p">/docs</span><span class="st live">OpenAPI</span></div>
   </div>
   <footer>GROWX · CORTEX v__VERSION__</footer>
@@ -130,6 +151,7 @@ def _db_status(settings: Settings) -> str:
 def create_app(settings: Settings | None = None) -> FastAPI:
     cfg = settings if settings is not None else get_settings()
     app = FastAPI(title="CORTEX", version=__version__)
+    memory = MemoryService(cfg)
 
     @app.get("/", response_class=HTMLResponse)
     def status_page() -> HTMLResponse:
@@ -159,10 +181,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         if not query:
             raise HTTPException(status_code=422, detail="query vacía")
         try:
-            store = postgres_store_from_dsn(cfg.postgres_dsn)
-            return answer_query(store, query)
-        except HTTPException:
-            raise
+            return memory.retrieve(query)
         except Exception as exc:  # p.ej. Postgres no disponible
             raise HTTPException(
                 status_code=503, detail=f"memoria no disponible: {exc}"
@@ -200,24 +219,100 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             raise HTTPException(status_code=503, detail=f"no se pudo ingerir: {exc}") from exc
         if persisted is None:
             return {"inserted": False, "external_id": ext_id, "reason": "duplicate"}
+        memory.invalidate()  # la memoria cacheada quedó obsoleta con el evento nuevo
         return {"inserted": True, "external_id": ext_id, "event_id": persisted.id}
 
-    @app.post("/api/chat", status_code=501)
-    def chat_placeholder() -> dict[str, str]:
-        """Superficie 11.1 — generación conversacional (necesita proveedor; F2.1)."""
-        raise HTTPException(status_code=501, detail=_NOT_IMPLEMENTED)
+    @app.post("/api/chat")
+    def chat(body: ChatRequest) -> GroundedAnswer:
+        """Superficie 11.1 — respuesta conversacional FUNDAMENTADA (§8, §11.1).
 
-    @app.get("/api/inbox", status_code=501)
-    def inbox_placeholder() -> dict[str, str]:
-        """Superficie 11.2 — bandeja de decisiones (F4)."""
-        raise HTTPException(status_code=501, detail=_NOT_IMPLEMENTED)
+        Recupera evidencia de la memoria y genera una respuesta citada con el
+        núcleo cognitivo (proveedor configurado). Sin evidencia dice que no sabe;
+        sin proveedor (o ante un fallo de red) cae a una respuesta extractiva
+        determinista ($0). Nunca inventa fuera de la evidencia (principio 3).
+        """
+        query = body.query.strip()
+        if not query:
+            raise HTTPException(status_code=422, detail="query vacía")
+        try:
+            retrieval = memory.retrieve(query)
+        except Exception as exc:  # p.ej. Postgres no disponible
+            raise HTTPException(status_code=503, detail=f"memoria no disponible: {exc}") from exc
+        inference = build_inference_client(cfg, role="core")
+        try:
+            return answer_from_retrieval(retrieval, inference=inference)
+        except Exception:
+            # El proveedor falló (red/timeout): degradá a extractivo, nunca 500.
+            return answer_from_retrieval(retrieval, inference=None)
 
-    @app.get("/api/panels/{panel_name}", status_code=501)
-    def panels_placeholder(panel_name: str) -> dict[str, str]:
+    @app.get("/api/inbox")
+    def inbox() -> dict[str, Any]:
+        """Superficie 11.2 — bandeja de decisiones (§11.2).
+
+        Tarjetas derivadas de la memoria: alertas de compromiso (por vencer /
+        vencidos, con evidencia) y desambiguaciones pendientes. Anti-inercia
+        aplicado por la cola. Ordenadas por urgencia.
+        """
+        now = datetime.now(tz=UTC)
+        try:
+            snap = memory.snapshot()
+        except Exception as exc:
+            raise HTTPException(status_code=503, detail=f"memoria no disponible: {exc}") from exc
+        box = build_decision_inbox(snap.memory, now=now, pipeline_ver=cfg.pipeline_ver)
+        cards = [card_to_api(c) for c in box.pending()]
+        return {"cards": cards, "count": len(cards)}
+
+    @app.get("/api/panels/{panel_name}")
+    def panels(panel_name: str) -> dict[str, Any]:
         """Superficie 11.3 — paneles (mapa operativo, agentes, compromisos, economía)."""
-        raise HTTPException(status_code=501, detail=_NOT_IMPLEMENTED)
+        now = datetime.now(tz=UTC)
+        try:
+            snap = memory.snapshot()
+        except Exception as exc:
+            raise HTTPException(status_code=503, detail=f"memoria no disponible: {exc}") from exc
+        name = panel_name.lower()
+        if name == "commitments":
+            return _project_commitments(commitments_panel(snap.memory, now=now))
+        if name == "agents":
+            # Registro de agentes diseñados (F4): por ahora el mail-responder.
+            return agents_panel([mail_responder_spec()])
+        if name == "economy":
+            return _project_economy(economy_panel())
+        if name in ("map", "operative", "operative_map"):
+            return _project_map(operative_map_panel(snap.memory))
+        raise HTTPException(status_code=404, detail=f"panel desconocido: {panel_name}")
 
     return app
+
+
+def _project_commitments(panel: dict[str, Any]) -> dict[str, Any]:
+    """Aplana los grupos por dirección a listas (la web espera arrays planos),
+    conservando `direction` en cada item y los `counts` originales."""
+    out: dict[str, Any] = {"counts": panel.get("counts", {})}
+    for group in ("vigentes", "en_riesgo", "incumplidos"):
+        by_dir = panel.get(group, {})
+        items: list[dict[str, Any]] = []
+        if isinstance(by_dir, dict):
+            for direction, rows in by_dir.items():
+                for row in rows:
+                    items.append({**row, "direction": row.get("direction", direction)})
+        out[group] = items
+    return out
+
+
+def _project_economy(panel: dict[str, Any]) -> dict[str, Any]:
+    """Agrega alias `savings_usd` que la web lee, sin perder la clave canónica."""
+    return {**panel, "savings_usd": panel.get("savings_estimate_usd", 0.0)}
+
+
+def _project_map(panel: dict[str, Any]) -> dict[str, Any]:
+    """Proyecta `as_is` (dict de conteos) a filas planas para la web."""
+    as_is = panel.get("as_is", {})
+    by_kind = as_is.get("entities_by_kind", {}) if isinstance(as_is, dict) else {}
+    by_rel = as_is.get("relations_by_rel", {}) if isinstance(as_is, dict) else {}
+    rows = [{"tipo": "entidad", "clave": k, "conteo": v} for k, v in by_kind.items()]
+    rows += [{"tipo": "relación", "clave": k, "conteo": v} for k, v in by_rel.items()]
+    return {"as_is": rows, "resumen": as_is, "to_be": panel.get("to_be", {})}
 
 
 # Instancia para `uvicorn cortex.api.app:app` (Dockerfile / docker compose).
