@@ -34,13 +34,29 @@ export interface RetrieveResponse {
   note: string;
 }
 
+/**
+ * A grounded, generated answer from /api/chat. `engine` says how it was produced:
+ * 'llm' (a model wrote it), 'extractive' (assembled from evidence at $0 cost), or
+ * 'none' (no evidence, so no answer). When `grounded` is false, CORTEX abstains.
+ */
+export interface GroundedAnswer {
+  answer: string;
+  grounded: boolean;
+  used_events: number[];
+  engine: 'llm' | 'extractive' | 'none';
+  note: string;
+}
+
 // --- Decision inbox (11.2) ------------------------------------------------
 
 export type DecisionKind =
-  | 'action'
+  | 'action_proposal'
   | 'disambiguation'
-  | 'new_agent'
+  | 'new_agent_proposal'
   | 'commitment_alert'
+  // legacy short forms tolerated at the edge
+  | 'action'
+  | 'new_agent'
   | string;
 
 export interface DecisionCard {
@@ -52,17 +68,22 @@ export interface DecisionCard {
   /** Collapsed reasoning shown behind the "why". */
   why: string;
   evidence_events: Array<number | string>;
+  /** Optional priority hint from the backend (e.g. 'high' | 'medium' | 'low'). */
+  urgency?: string;
+  /** True when the card is deliberately shown without a recommendation. */
+  anti_inertia?: boolean;
 }
 
 export interface InboxResponse {
   cards: DecisionCard[];
+  count?: number;
 }
 
 export type DecisionChoice = 'approve' | 'edit' | 'reject';
 
 // --- Panels (11.3) --------------------------------------------------------
 
-export type PanelName = 'operative' | 'agents' | 'commitments' | 'economy';
+export type PanelName = 'map' | 'agents' | 'commitments' | 'economy';
 
 /** Panels return free-form objects for now; each surface narrows as needed. */
 export type PanelData = Record<string, unknown>;

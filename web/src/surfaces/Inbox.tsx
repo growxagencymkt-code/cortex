@@ -42,8 +42,10 @@ export function Inbox() {
 }
 
 const KIND_LABEL: Record<string, string> = {
+  action_proposal: 'Propuesta de acción',
   action: 'Propuesta de acción',
   disambiguation: 'Desambiguación',
+  new_agent_proposal: 'Nuevo agente',
   new_agent: 'Nuevo agente',
   commitment_alert: 'Alerta de compromiso',
 };
@@ -54,10 +56,24 @@ function kindStyle(kind: DecisionKind): string {
       return 'border-red-500/40 text-red-300 bg-red-500/10';
     case 'disambiguation':
       return 'border-gold/40 text-gold bg-gold/10';
+    case 'new_agent_proposal':
     case 'new_agent':
       return 'border-green/40 text-green bg-green/10';
     default:
       return 'border-cyan/40 text-cyan bg-cyan/10';
+  }
+}
+
+function urgencyStyle(urgency: string): string {
+  switch (urgency.toLowerCase()) {
+    case 'high':
+    case 'alta':
+      return 'border-red-500/40 text-red-300 bg-red-500/10';
+    case 'medium':
+    case 'media':
+      return 'border-gold/40 text-gold bg-gold/10';
+    default:
+      return 'border-ink-600 text-gray bg-ink-700/60';
   }
 }
 
@@ -68,7 +84,8 @@ function Card({ card }: { card: DecisionCard }) {
   const [note, setNote] = useState('');
   const [resolved, setResolved] = useState<null | string>(null);
 
-  const noRecommendation = card.recommendation.trim() === '';
+  const noRecommendation =
+    card.anti_inertia === true || card.recommendation.trim() === '';
 
   const mutation = useMutation({
     mutationFn: (choice: 'approve' | 'edit' | 'reject') =>
@@ -86,13 +103,24 @@ function Card({ card }: { card: DecisionCard }) {
     <article className="rounded-lg border border-ink-600 bg-ink-800/60">
       <header className="flex items-start justify-between gap-3 border-b border-ink-700 px-4 py-3">
         <div className="min-w-0">
-          <span
-            className={`inline-block rounded border px-1.5 py-0.5 text-2xs font-medium ${kindStyle(
-              card.kind,
-            )}`}
-          >
-            {KIND_LABEL[card.kind] ?? card.kind}
-          </span>
+          <div className="flex flex-wrap items-center gap-1.5">
+            <span
+              className={`inline-block rounded border px-1.5 py-0.5 text-2xs font-medium ${kindStyle(
+                card.kind,
+              )}`}
+            >
+              {KIND_LABEL[card.kind] ?? card.kind}
+            </span>
+            {card.urgency ? (
+              <span
+                className={`inline-block rounded border px-1.5 py-0.5 text-2xs font-medium uppercase tracking-wide ${urgencyStyle(
+                  card.urgency,
+                )}`}
+              >
+                {card.urgency}
+              </span>
+            ) : null}
+          </div>
           <h3 className="mt-1.5 font-display text-sm font-semibold text-gray-light">
             {card.title}
           </h3>

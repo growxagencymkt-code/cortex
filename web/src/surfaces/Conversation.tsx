@@ -1,30 +1,52 @@
 import { useState } from 'react';
 import { useMutation } from '@tanstack/react-query';
-import { retrieve } from '../api/client.ts';
-import type { RetrieveResponse } from '../api/types.ts';
+import { chat, retrieve } from '../api/client.ts';
+import type { GroundedAnswer, RetrieveResponse } from '../api/types.ts';
 import { ChunkEvidenceChip, EvidenceChip } from '../components/EvidenceChip.tsx';
 import { ErrorState, LoadingState } from '../components/states.tsx';
+
+/** What one turn resolves to: the generated answer (may be absent if /api/chat
+ *  failed) plus the raw evidence from /api/retrieve. */
+interface TurnResult {
+  answer?: GroundedAnswer;
+  chatError?: unknown;
+  evidence: RetrieveResponse;
+}
 
 interface Turn {
   id: number;
   query: string;
-  answer?: RetrieveResponse;
+  result?: TurnResult;
   error?: unknown;
   pending: boolean;
 }
 
 /**
- * Conversation (§11.1): chat over the memory. There is no free-text generation
- * here — the surface renders exactly what /api/retrieve returns (graph facts +
- * chunks), each with an expandable evidence chip. When answerable=false we say
- * so plainly instead of inventing an answer (§8: never fill with general knowledge).
+ * Conversation (§11.1): chat over the memory. On each turn we call BOTH
+ * /api/chat (a grounded, generated answer) and /api/retrieve (the raw evidence
+ * that backs it). The generated answer leads; the evidence sits below it so any
+ * claim can be traced. If /api/chat fails we still show the evidence — we never
+ * blank the screen. When there is no evidence, CORTEX says it does not know
+ * instead of inventing an answer (§8: never fill with general knowledge).
  */
 export function Conversation() {
   const [input, setInput] = useState('');
   const [turns, setTurns] = useState<Turn[]>([]);
 
   const ask = useMutation({
-    mutationFn: (query: string) => retrieve(query),
+    mutationFn: async (query: string): Promise<TurnResult> => {
+      // /api/chat may not be wired up or may error — don't let it sink the turn.
+      const [answerOutcome, evidence] = await Promise.all([
+        chat(query).then(
+          (a) => ({ ok: true as const, value: a }),
+          (e) => ({ ok: false as const, error: e }),
+        ),
+        retrieve(query),
+      ]);
+      return answerOutcome.ok
+        ? { answer: answerOutcome.value, evidence }
+        : { chatError: answerOutcome.error, evidence };
+    },
   });
 
   function submit(e: React.FormEvent) {
@@ -37,10 +59,10 @@ export function Conversation() {
     setInput('');
 
     ask.mutate(query, {
-      onSuccess: (answer) =>
+      onSuccess: (result) =>
         setTurns((t) =>
           t.map((turn) =>
-            turn.id === id ? { ...turn, answer, pending: false } : turn,
+            turn.id === id ? { ...turn, result, pending: false } : turn,
           ),
         ),
       onError: (error) =>
@@ -61,9 +83,9 @@ export function Conversation() {
               Preguntá a la memoria
             </h2>
             <p className="mt-2 text-sm text-gray">
-              Las respuestas se construyen solo con hechos del grafo y fragmentos
-              recuperados, cada uno con su evidencia. Si no hay evidencia, CORTEX
-              dice que no sabe — no inventa.
+              CORTEX responde con una respuesta redactada y, debajo, la evidencia
+              que la respalda: hechos del grafo y fragmentos recuperados, cada uno
+              con su fuente. Si no hay evidencia, dice que no sabe — no inventa.
             </p>
             <div className="mt-4 flex flex-wrap justify-center gap-2 text-xs">
               {SAMPLES.map((s) => (
@@ -124,47 +146,125 @@ function TurnView({ turn }: { turn: Turn }) {
         </p>
       </div>
 
-      <div className="max-w-[92%]">
+      <div className="max-w-[92%] space-y-3">
         {turn.pending ? (
           <LoadingState label="Recuperando de la memoria…" />
         ) : turn.error ? (
           <ErrorState error={turn.error} />
-        ) : turn.answer ? (
-          <AnswerView answer={turn.answer} />
+        ) : turn.result ? (
+          <>
+            <AnswerBlock result={turn.result} />
+            <EvidenceBlock evidence={turn.result.evidence} />
+          </>
         ) : null}
       </div>
     </div>
   );
 }
 
-function AnswerView({ answer }: { answer: RetrieveResponse }) {
-  const hasEvidence = answer.facts.length > 0 || answer.chunks.length > 0;
+// --- Generated answer (leads the turn) -----------------------------------
 
-  if (!answer.answerable || !hasEvidence) {
+const ENGINE_BADGE: Record<GroundedAnswer['engine'], { label: string; cls: string }> = {
+  llm: { label: 'IA', cls: 'border-cyan/40 bg-cyan/10 text-cyan' },
+  extractive: {
+    label: 'Extractivo · $0',
+    cls: 'border-green/40 bg-green/10 text-green',
+  },
+  none: { label: 'Sin evidencia', cls: 'border-gray/40 bg-ink-700 text-gray' },
+};
+
+function EngineBadge({ engine }: { engine: GroundedAnswer['engine'] }) {
+  const b = ENGINE_BADGE[engine] ?? ENGINE_BADGE.none;
+  return (
+    <span
+      className={`shrink-0 rounded border px-1.5 py-0.5 text-2xs font-medium ${b.cls}`}
+    >
+      {b.label}
+    </span>
+  );
+}
+
+function AnswerBlock({ result }: { result: TurnResult }) {
+  const { answer, chatError } = result;
+
+  // /api/chat unavailable or errored: fall back to evidence-only, but say so.
+  if (!answer) {
     return (
-      <div className="rounded-lg rounded-bl-sm border border-gold/30 bg-gold/5 px-3 py-2.5 text-sm text-gold/90">
-        <p className="font-medium">Sin evidencia suficiente en la memoria.</p>
-        <p className="mt-1 text-gold/70">
-          {answer.note ||
+      <div className="rounded-lg rounded-bl-sm border border-ink-600 bg-ink-800/40 px-4 py-3 text-sm text-gray">
+        No pude generar una respuesta redactada
+        {chatError instanceof Error && chatError.message
+          ? ` (${chatError.message})`
+          : ''}
+        . Debajo está la evidencia recuperada.
+      </div>
+    );
+  }
+
+  // Grounded=false or engine=none: CORTEX abstains rather than invent.
+  if (!answer.grounded || answer.engine === 'none') {
+    return (
+      <div className="rounded-lg rounded-bl-sm border border-gold/30 bg-gold/5 px-4 py-3">
+        <div className="flex items-center justify-between gap-2">
+          <p className="text-sm font-medium text-gold/90">
+            No sé — sin evidencia suficiente en la memoria.
+          </p>
+          <EngineBadge engine={answer.engine} />
+        </div>
+        <p className="mt-1 text-sm leading-relaxed text-gold/70">
+          {answer.answer ||
+            answer.note ||
             'No encontré hechos ni fragmentos que respalden una respuesta. No voy a inventar.'}
         </p>
       </div>
     );
   }
 
+  // Grounded answer — this is the star of the surface.
   return (
-    <div className="space-y-3 rounded-lg rounded-bl-sm border border-ink-600 bg-ink-800/60 px-3 py-3">
-      {answer.note ? (
-        <p className="text-sm leading-relaxed text-gray-light">{answer.note}</p>
+    <div className="rounded-lg rounded-bl-sm border border-cyan/25 bg-ink-800/70 px-4 py-3.5 shadow-[0_0_0_1px_rgba(55,182,199,0.06)]">
+      <div className="mb-2 flex items-center justify-between gap-2">
+        <span className="text-2xs font-semibold uppercase tracking-wide text-gray">
+          Respuesta
+        </span>
+        <EngineBadge engine={answer.engine} />
+      </div>
+      <p className="whitespace-pre-wrap font-display text-[0.95rem] leading-relaxed text-gray-light">
+        {answer.answer}
+      </p>
+      {answer.used_events.length > 0 ? (
+        <div className="mt-3 flex flex-wrap items-center gap-1.5 border-t border-ink-700 pt-2.5">
+          <span className="text-2xs text-gray">Basado en</span>
+          {answer.used_events.map((ev, i) => (
+            <EvidenceChip key={`${ev}-${i}`} eventId={ev} />
+          ))}
+        </div>
       ) : null}
+      {answer.note ? (
+        <p className="mt-2 text-2xs text-gray">{answer.note}</p>
+      ) : null}
+    </div>
+  );
+}
 
-      {answer.facts.length > 0 ? (
+// --- Evidence (the traceable backing, below the answer) ------------------
+
+function EvidenceBlock({ evidence }: { evidence: RetrieveResponse }) {
+  const hasEvidence = evidence.facts.length > 0 || evidence.chunks.length > 0;
+  if (!hasEvidence) return null;
+
+  return (
+    <div className="space-y-3 rounded-lg border border-ink-700 bg-ink-900/50 px-4 py-3">
+      <h4 className="text-2xs font-semibold uppercase tracking-wide text-gray">
+        Evidencia
+      </h4>
+
+      {evidence.facts.length > 0 ? (
         <section>
-          <h4 className="mb-1.5 text-2xs font-semibold uppercase tracking-wide text-gray">
+          <h5 className="mb-1.5 text-2xs font-medium uppercase tracking-wide text-gray/80">
             Hechos del grafo
-          </h4>
+          </h5>
           <ul className="space-y-1.5">
-            {answer.facts.map((f, i) => (
+            {evidence.facts.map((f, i) => (
               <li
                 key={`${f.src}-${f.rel}-${f.dst}-${i}`}
                 className="flex flex-wrap items-center gap-1.5 text-sm text-gray-light"
@@ -181,13 +281,13 @@ function AnswerView({ answer }: { answer: RetrieveResponse }) {
         </section>
       ) : null}
 
-      {answer.chunks.length > 0 ? (
+      {evidence.chunks.length > 0 ? (
         <section>
-          <h4 className="mb-1.5 text-2xs font-semibold uppercase tracking-wide text-gray">
+          <h5 className="mb-1.5 text-2xs font-medium uppercase tracking-wide text-gray/80">
             Fragmentos recuperados
-          </h4>
+          </h5>
           <ul className="space-y-2">
-            {answer.chunks.map((c, i) => (
+            {evidence.chunks.map((c, i) => (
               <li
                 key={`${c.event_id}-${i}`}
                 className="rounded border border-ink-700 bg-ink-900/60 p-2"

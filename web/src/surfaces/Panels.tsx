@@ -11,9 +11,10 @@ import {
   pick,
 } from '../api/read.ts';
 import { EmptyState, ErrorState, LoadingState } from '../components/states.tsx';
+import { EvidenceChip } from '../components/EvidenceChip.tsx';
 
 const PANELS: { name: PanelName; label: string }[] = [
-  { name: 'operative', label: 'Mapa operativo' },
+  { name: 'map', label: 'Mapa operativo' },
   { name: 'agents', label: 'Agentes' },
   { name: 'commitments', label: 'Compromisos' },
   { name: 'economy', label: 'Economía' },
@@ -25,7 +26,7 @@ const PANELS: { name: PanelName; label: string }[] = [
  * key/value view otherwise, so the surface is useful the moment data arrives.
  */
 export function Panels() {
-  const [active, setActive] = useState<PanelName>('operative');
+  const [active, setActive] = useState<PanelName>('map');
 
   return (
     <div className="flex h-full flex-col">
@@ -73,7 +74,7 @@ function PanelBody({ name }: { name: PanelName }) {
   }
 
   switch (name) {
-    case 'operative':
+    case 'map':
       return <OperativePanel data={data} />;
     case 'agents':
       return <AgentsPanel data={data} />;
@@ -91,13 +92,27 @@ function PanelBody({ name }: { name: PanelName }) {
 function OperativePanel({ data }: { data: PanelData }) {
   const asIs = asArray(pick(data, 'as_is', 'asIs'));
   const toBe = asArray(pick(data, 'to_be', 'toBe'));
+  const resumen = asString(pick(data, 'resumen', 'summary'));
 
-  if (asIs.length === 0 && toBe.length === 0) return <RawPanel data={data} />;
+  if (asIs.length === 0 && toBe.length === 0 && !resumen) {
+    return <RawPanel data={data} />;
+  }
 
   return (
-    <div className="grid gap-4 md:grid-cols-2">
-      <ProcessColumn title="As-is (cómo opera hoy)" accent="gray" steps={asIs} />
-      <ProcessColumn title="To-be (cómo debería operar)" accent="cyan" steps={toBe} />
+    <div className="space-y-4">
+      {resumen ? (
+        <p className="rounded-lg border border-ink-600 bg-ink-800/50 p-3 text-sm leading-relaxed text-gray-light">
+          {resumen}
+        </p>
+      ) : null}
+      <div className="grid gap-4 md:grid-cols-2">
+        <ProcessColumn title="As-is (cómo opera hoy)" accent="gray" steps={asIs} />
+        <ProcessColumn
+          title="To-be (cómo debería operar)"
+          accent="cyan"
+          steps={toBe}
+        />
+      </div>
     </div>
   );
 }
@@ -123,15 +138,25 @@ function ProcessColumn({
         <ol className="space-y-2">
           {steps.map((step, i) => {
             const label = isRecord(step)
-              ? asString(pick(step, 'label', 'name', 'step', 'title'), `Paso ${i + 1}`)
+              ? asString(
+                  pick(step, 'clave', 'label', 'name', 'step', 'title'),
+                  `Paso ${i + 1}`,
+                )
               : asString(step, `Paso ${i + 1}`);
-            const note = isRecord(step) ? asString(pick(step, 'note', 'detail')) : '';
+            const tipo = isRecord(step) ? asString(pick(step, 'tipo', 'type')) : '';
+            const conteo = isRecord(step)
+              ? asNumber(pick(step, 'conteo', 'count'))
+              : null;
+            const detail = isRecord(step) ? asString(pick(step, 'note', 'detail')) : '';
+            const meta = [tipo, conteo !== null ? `×${conteo}` : '', detail]
+              .filter(Boolean)
+              .join(' · ');
             return (
               <li key={i} className="flex gap-2 text-sm text-gray-light">
                 <span className={`mt-1.5 h-1.5 w-1.5 shrink-0 rounded-full ${dot}`} />
                 <span>
                   {label}
-                  {note ? <span className="block text-xs text-gray">{note}</span> : null}
+                  {meta ? <span className="block text-xs text-gray">{meta}</span> : null}
                 </span>
               </li>
             );
@@ -345,13 +370,19 @@ function CommitmentColumn({
             const direction = isRecord(it)
               ? asString(pick(it, 'direction', 'dir'))
               : '';
+            const confidence = isRecord(it)
+              ? asNumber(pick(it, 'confidence'))
+              : null;
+            const evidence = isRecord(it)
+              ? pick(it, 'evidence_event', 'evidence')
+              : undefined;
             return (
               <li
                 key={i}
                 className="rounded border border-ink-700 bg-ink-900/60 p-2 text-sm text-gray-light"
               >
                 <p>{text}</p>
-                <div className="mt-1 flex flex-wrap gap-x-3 text-2xs text-gray">
+                <div className="mt-1 flex flex-wrap items-center gap-x-3 gap-y-1 text-2xs text-gray">
                   {who ? <span>{who}</span> : null}
                   {due ? <span>vence: {due}</span> : null}
                   {direction ? (
@@ -362,6 +393,13 @@ function CommitmentColumn({
                           ? 'de nosotros'
                           : direction}
                     </span>
+                  ) : null}
+                  {confidence !== null ? (
+                    <span>conf: {fmtPct(confidence)}</span>
+                  ) : null}
+                  {evidence !== undefined &&
+                  (typeof evidence === 'number' || typeof evidence === 'string') ? (
+                    <EvidenceChip eventId={evidence} />
                   ) : null}
                 </div>
               </li>
@@ -377,12 +415,17 @@ function CommitmentColumn({
 
 function EconomyPanel({ data }: { data: PanelData }) {
   const cost = asNumber(pick(data, 'cost_usd', 'cost', 'total_cost'));
-  const savings = asNumber(pick(data, 'savings_usd', 'savings', 'estimated_savings'));
+  const savings = asNumber(
+    pick(data, 'savings_usd', 'savings_estimate_usd', 'savings', 'estimated_savings'),
+  );
 
   if (cost === null && savings === null) return <RawPanel data={data} />;
 
-  const net = (savings ?? 0) - (cost ?? 0);
-  const ratio = cost && cost > 0 ? (savings ?? 0) / cost : null;
+  // Prefer backend-computed net/ratio; fall back to deriving them locally.
+  const net = asNumber(pick(data, 'net')) ?? (savings ?? 0) - (cost ?? 0);
+  const ratio =
+    asNumber(pick(data, 'ratio')) ??
+    (cost && cost > 0 ? (savings ?? 0) / cost : null);
 
   return (
     <div className="space-y-4">

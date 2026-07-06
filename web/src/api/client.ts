@@ -1,4 +1,5 @@
 import type {
+  GroundedAnswer,
   Health,
   InboxResponse,
   PanelData,
@@ -63,6 +64,17 @@ export function getHealth(): Promise<Health> {
 
 export function retrieve(query: string): Promise<RetrieveResponse> {
   return request<RetrieveResponse>('/api/retrieve', {
+    method: 'POST',
+    body: JSON.stringify({ query }),
+  });
+}
+
+/**
+ * Grounded generation over the memory (§11.1). Returns a written answer plus the
+ * events it was grounded on. Complements /api/retrieve (which returns raw evidence).
+ */
+export function chat(query: string): Promise<GroundedAnswer> {
+  return request<GroundedAnswer>('/api/chat', {
     method: 'POST',
     body: JSON.stringify({ query }),
   });
