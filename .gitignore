@@ -1,0 +1,39 @@
+# Secretos y configuración local — JAMÁS al repo
+.env
+.env.*
+!.env.example
+*.pem
+*.key
+credentials*.json
+token*.json
+
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+.eggs/
+build/
+dist/
+.venv/
+venv/
+.mypy_cache/
+.pytest_cache/
+.ruff_cache/
+.coverage
+htmlcov/
+
+# Node / web (F2)
+node_modules/
+web/dist/
+
+# Datos locales / volúmenes / backups
+backups/
+*.dump
+*.sql.gz
+pgdata/
+
+# IDE / OS
+.vscode/
+.idea/
+.DS_Store
+Thumbs.db

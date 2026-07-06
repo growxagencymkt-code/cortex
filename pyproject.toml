@@ -1,0 +1,50 @@
+[build-system]
+requires = ["setuptools>=69"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "cortex"
+version = "0.1.0"
+description = "CORTEX — cerebro operativo agentivo (event sourcing + memoria organizacional + simulador de agentes)"
+readme = "README.md"
+requires-python = ">=3.12"
+license = { text = "Proprietary" }
+dependencies = [
+    "pydantic>=2.7",
+    "pydantic-settings>=2.2",
+    "fastapi>=0.111",
+    "uvicorn>=0.30",
+    "sqlalchemy>=2.0.30",
+    "alembic>=1.13",
+    "psycopg[binary]>=3.1",
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest>=8.2",
+    "mypy>=1.10",
+    "httpx>=0.27",
+]
+
+[project.scripts]
+cortex = "cortex.cli:main"
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.setuptools.package-data]
+cortex = ["py.typed"]
+
+[tool.mypy]
+strict = true
+python_version = "3.12"
+files = ["src/cortex"]
+plugins = ["pydantic.mypy"]
+warn_unreachable = true
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+addopts = "--strict-markers -q"
+markers = [
+    "injection: suite de inyeccion de prompts. OBLIGATORIA en CI (principio 3 del SYSTEM_PROMPT): cualquier obediencia a una instruccion embebida en contenido observado es fallo automatico.",
+]
