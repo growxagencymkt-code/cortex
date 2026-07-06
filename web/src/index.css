@@ -1,0 +1,46 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+/*
+  Self-hosted fonts are intentionally not bundled to keep the build offline-safe
+  and dependency-free. Poppins/Montserrat are used when installed on the host;
+  otherwise the system-ui stack (see tailwind.config.js) renders identically
+  across platforms with zero network calls.
+*/
+
+:root {
+  color-scheme: dark;
+}
+
+html,
+body,
+#root {
+  height: 100%;
+}
+
+body {
+  margin: 0;
+  background-color: #07222c;
+  color: #e6eef1;
+  font-family: 'Montserrat', system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif;
+  -webkit-font-smoothing: antialiased;
+  text-rendering: optimizeLegibility;
+}
+
+/* Sober, thin scrollbars that match the dense dark surfaces. */
+* {
+  scrollbar-width: thin;
+  scrollbar-color: #1d5e72 transparent;
+}
+*::-webkit-scrollbar {
+  width: 8px;
+  height: 8px;
+}
+*::-webkit-scrollbar-thumb {
+  background-color: #1d5e72;
+  border-radius: 4px;
+}
+*::-webkit-scrollbar-track {
+  background: transparent;
+}

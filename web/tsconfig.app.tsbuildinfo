@@ -1,0 +1,1 @@
+{"root":["./src/app.tsx","./src/main.tsx","./src/vite-env.d.ts","./src/api/client.ts","./src/api/read.ts","./src/api/types.ts","./src/components/evidencechip.tsx","./src/components/healthbadge.tsx","./src/components/states.tsx","./src/surfaces/conversation.tsx","./src/surfaces/inbox.tsx","./src/surfaces/panels.tsx"],"version":"5.6.3"}
