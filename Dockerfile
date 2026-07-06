@@ -15,4 +15,5 @@ RUN pip install .
 EXPOSE 8000
 
 # Aplica migraciones y levanta la API (un solo proceso, sección 5 del SYSTEM_PROMPT).
-CMD ["sh", "-c", "alembic upgrade head && uvicorn cortex.api.app:app --host 0.0.0.0 --port 8000"]
+# Bindea $PORT si la plataforma lo inyecta (Railway/Render); si no, 8000 local.
+CMD ["sh", "-c", "alembic upgrade head && uvicorn cortex.api.app:app --host 0.0.0.0 --port ${PORT:-8000}"]

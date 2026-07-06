@@ -9,7 +9,26 @@ from __future__ import annotations
 
 from functools import lru_cache
 
+from pydantic import AliasChoices, Field, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
+
+_DEFAULT_DSN = "postgresql+psycopg://cortex:cortex@localhost:5432/cortex"
+
+
+def _normalize_dsn(url: str) -> str:
+    """Normaliza un DSN de Postgres al driver psycopg que usa SQLAlchemy.
+
+    Plataformas como Railway/Render/Heroku inyectan `DATABASE_URL` con esquema
+    `postgres://` o `postgresql://` (sin driver). SQLAlchemy + psycopg3 necesita
+    `postgresql+psycopg://`. Esta función lo adapta sin tocar credenciales.
+    """
+    if url.startswith("postgresql+"):
+        return url  # ya trae driver explícito (p.ej. +psycopg)
+    if url.startswith("postgresql://"):
+        return "postgresql+psycopg://" + url[len("postgresql://") :]
+    if url.startswith("postgres://"):
+        return "postgresql+psycopg://" + url[len("postgres://") :]
+    return url
 
 
 class Settings(BaseSettings):
@@ -22,8 +41,18 @@ class Settings(BaseSettings):
         extra="ignore",
     )
 
-    # Base de datos (un solo Postgres para todo — principio 10)
-    postgres_dsn: str = "postgresql+psycopg://cortex:cortex@localhost:5432/cortex"
+    # Base de datos (un solo Postgres para todo — principio 10).
+    # Acepta `CORTEX_POSTGRES_DSN` o, si no está, la `DATABASE_URL` que inyectan
+    # las plataformas cloud (Railway/Render/Heroku): se normaliza el driver.
+    postgres_dsn: str = Field(
+        default=_DEFAULT_DSN,
+        validation_alias=AliasChoices("CORTEX_POSTGRES_DSN", "DATABASE_URL"),
+    )
+
+    @model_validator(mode="after")
+    def _normalize_postgres_dsn(self) -> "Settings":
+        object.__setattr__(self, "postgres_dsn", _normalize_dsn(self.postgres_dsn))
+        return self
 
     # Pipeline de ingesta: versión semver estampada en cada evento (sección 7)
     pipeline_ver: str = "0.1.0"

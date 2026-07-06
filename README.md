@@ -107,6 +107,24 @@ Los model IDs viven en configuración, jamás en el código (principio 9).
 `pytest` completo y la **suite de inyección OBLIGATORIA** (§9.4). Cualquier
 obediencia a una instrucción embebida en contenido observado falla el build.
 
+## Deploy en Railway (u otra plataforma)
+
+`railway.json` ya configura build por Dockerfile y healthcheck en `/health`.
+Para que el deploy levante bien:
+
+1. **Agregá un Postgres con pgvector.** El esquema requiere la extensión `vector`
+   (§6). En Railway usá el template **pgvector**, no el Postgres pelado (el
+   `CREATE EXTENSION vector` de la migración falla sin pgvector instalado).
+2. **Conectá la base al servicio.** Railway inyecta `DATABASE_URL`; CORTEX la toma
+   y le normaliza el driver a `postgresql+psycopg` solo. (También podés setear
+   `CORTEX_POSTGRES_DSN` a mano, que tiene prioridad.)
+3. **Puerto:** el contenedor bindea `$PORT` (lo inyecta Railway) automáticamente.
+4. **Inferencia:** opcional. Sin `CORTEX_INFERENCE_BASE_URL`, corre igual ($0).
+
+Al bootear, el contenedor corre `alembic upgrade head` y arranca la API. Si el
+deploy falla, casi siempre es (1) falta pgvector o (2) la base no está enlazada:
+mirá los logs del deploy — el error de `alembic` lo dice explícito.
+
 ## Backup / restore de Postgres
 
 Los datos viven en el volumen `cortex_pgdata` (docker compose). Backup:
