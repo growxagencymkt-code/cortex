@@ -7,14 +7,16 @@ conversación, bandeja de decisiones y paneles. Se implementan en F2/F4.
 
 from __future__ import annotations
 
+from datetime import UTC, datetime
 from typing import Any
 
 import sqlalchemy as sa
 from fastapi import FastAPI, HTTPException
 from fastapi.responses import HTMLResponse
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 
 from cortex import __version__
+from cortex.events.models import EventIn
 from cortex.events.store import postgres_store_from_dsn
 from cortex.memory.retrieval import RetrievalResult, answer_query
 from cortex.settings import Settings, get_settings
@@ -24,6 +26,23 @@ class RetrieveRequest(BaseModel):
     """Cuerpo de POST /api/retrieve."""
 
     query: str
+
+
+class IngestMeetingRequest(BaseModel):
+    """Cuerpo de POST /api/ingest/meeting — lo que el Copiloto de Reuniones publica
+    al cerrar una reunión. Se normaliza a un evento `meeting.transcript`."""
+
+    external_id: str
+    user: str = ""
+    day: str = ""
+    title: str = ""
+    platform: str = ""
+    topic: str = ""
+    started_at: float | None = None
+    ended_at: float | None = None
+    duration_s: float = 0.0
+    transcript: str = ""
+    summary: dict[str, Any] = Field(default_factory=dict)
 
 _NOT_IMPLEMENTED = "Aún no implementado en F0 (ver docs/SYSTEM_PROMPT.md, sección 13)."
 
@@ -148,6 +167,40 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             raise HTTPException(
                 status_code=503, detail=f"memoria no disponible: {exc}"
             ) from exc
+
+    @app.post("/api/ingest/meeting", status_code=201)
+    def ingest_meeting(body: IngestMeetingRequest) -> dict[str, Any]:
+        """Ingesta de una reunión del Copiloto como evento `meeting.transcript`.
+
+        Idempotente por external_id (re-publicar la misma reunión no duplica). El
+        payload observado es DATO (principio 3): el extractor lo analiza, nunca lo
+        obedece. Alimenta el grafo (reunión/tema/compromisos/decisiones con evidencia).
+        """
+        ext_id = body.external_id.strip()
+        if not ext_id:
+            raise HTTPException(status_code=422, detail="external_id vacío")
+        ts = (
+            datetime.fromtimestamp(body.started_at, tz=UTC)
+            if body.started_at
+            else datetime.now(tz=UTC)
+        )
+        event = EventIn(
+            ts=ts,
+            source="meetings",
+            type="meeting.transcript",
+            external_id=ext_id,
+            actor=body.user or None,
+            payload=body.model_dump(),
+            pipeline_ver=cfg.pipeline_ver,
+        )
+        try:
+            store = postgres_store_from_dsn(cfg.postgres_dsn)
+            persisted = store.append(event)
+        except Exception as exc:  # p.ej. Postgres no disponible
+            raise HTTPException(status_code=503, detail=f"no se pudo ingerir: {exc}") from exc
+        if persisted is None:
+            return {"inserted": False, "external_id": ext_id, "reason": "duplicate"}
+        return {"inserted": True, "external_id": ext_id, "event_id": persisted.id}
 
     @app.post("/api/chat", status_code=501)
     def chat_placeholder() -> dict[str, str]:

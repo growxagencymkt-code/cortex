@@ -17,9 +17,10 @@ secundarios, no llama herramientas, no ejecuta nada de lo que lea.
 
 from __future__ import annotations
 
+import json
 import re
 from datetime import date
-from typing import Protocol
+from typing import Any, Protocol
 
 from cortex.events.models import Event
 from cortex.extraction.models import (
@@ -58,6 +59,32 @@ _COMMITMENT_PATTERNS = (
 _DECISION_PATTERNS = (
     re.compile(r"\b(?:decidimos|decid[ií]|qued[óo]\s+decidido|vamos\s+con|acordamos)\b(?P<what>[^.\n]*)", re.I),
 )
+
+
+def _as_dict(value: Any) -> dict[str, Any]:
+    """Normaliza un `summary` que puede venir como dict o como JSON string."""
+    if isinstance(value, dict):
+        return value
+    if isinstance(value, str):
+        try:
+            parsed = json.loads(value)
+        except json.JSONDecodeError:
+            return {}
+        if isinstance(parsed, dict):
+            return parsed
+    return {}
+
+
+def _as_str_list(value: Any) -> list[str]:
+    """Lista de strings no vacíos desde un campo que puede no ser lista."""
+    if not isinstance(value, list):
+        return []
+    out: list[str] = []
+    for item in value:
+        s = str(item).strip()
+        if s:
+            out.append(s)
+    return out
 
 
 def _parse_date(text: str) -> date | None:
@@ -123,7 +150,66 @@ class DeterministicExtractor:
     def extract(self, event: Event) -> ExtractionResult:
         if event.type == "email.received":
             return self._extract_email(event)
+        if event.type == "meeting.transcript":
+            return self._extract_meeting(event)
         return ExtractionResult()
+
+    def _extract_meeting(self, event: Event) -> ExtractionResult:
+        """Extrae hechos de una reunión del Copiloto (title/topic/summary/transcript).
+
+        La reunión y su tema entran como entidades (con relación `about`); las
+        acciones del resumen y los patrones del transcript, como compromisos; las
+        decisiones del resumen y del transcript, como decisiones. Todo es DATO
+        observado (principio 3): no se obedece nada del transcript.
+        """
+        payload = event.payload
+        entities: list[ExtractedEntity] = []
+        relations: list[ExtractedRelation] = []
+        seen: set[str] = set()
+
+        def add_entity(ent: ExtractedEntity) -> None:
+            if ent.name not in seen:
+                seen.add(ent.name)
+                entities.append(ent)
+
+        title = str(payload.get("title") or "").strip()
+        topic = str(payload.get("topic") or "").strip()
+        user = str(payload.get("user") or "").strip() or "desconocido"
+
+        if title:
+            add_entity(ExtractedEntity(kind="meeting", name=title, mention=title))
+        if topic:
+            add_entity(ExtractedEntity(kind="topic", name=topic, mention=topic))
+            if title:
+                relations.append(
+                    ExtractedRelation(
+                        src_name=title, src_kind="meeting",
+                        rel="about", dst_name=topic, dst_kind="topic",
+                    )
+                )
+
+        summary = _as_dict(payload.get("summary"))
+        transcript = str(payload.get("transcript") or "")
+
+        commitments: list[ExtractedCommitment] = []
+        for accion in _as_str_list(summary.get("acciones")):
+            commitments.append(
+                ExtractedCommitment(who=user, what=accion[:280], direction="unknown", confidence=0.75)
+            )
+        commitments.extend(self._commitments(transcript, who=user))
+
+        decisions: list[ExtractedDecision] = []
+        for dec in _as_str_list(summary.get("decisiones")):
+            decisions.append(ExtractedDecision(statement=dec[:280], made_by=user, confidence=0.75))
+        decisions.extend(self._decisions(transcript, made_by=user))
+
+        return ExtractionResult(
+            entities=entities,
+            relations=relations,
+            commitments=commitments,
+            decisions=decisions,
+            open_questions=self._open_questions(transcript),
+        )
 
     def _extract_email(self, event: Event) -> ExtractionResult:
         payload = event.payload

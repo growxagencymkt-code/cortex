@@ -125,6 +125,14 @@ class PostgresEventStore:
         return int(result)
 
 
-def postgres_store_from_dsn(dsn: str) -> PostgresEventStore:
-    """Crea un PostgresEventStore desde un DSN SQLAlchemy (settings.postgres_dsn)."""
-    return PostgresEventStore(sa.create_engine(dsn, pool_pre_ping=True))
+def postgres_store_from_dsn(dsn: str, *, connect_timeout: int = 5) -> PostgresEventStore:
+    """Crea un PostgresEventStore desde un DSN SQLAlchemy (settings.postgres_dsn).
+
+    `connect_timeout` acota la espera de conexión: sin él, apuntar a un Postgres
+    caído cuelga el request (en Windows, minutos de reintentos SYN). Con él, un
+    endpoint como /api/retrieve degrada rápido a 503 en vez de colgarse.
+    """
+    engine = sa.create_engine(
+        dsn, pool_pre_ping=True, connect_args={"connect_timeout": connect_timeout}
+    )
+    return PostgresEventStore(engine)
