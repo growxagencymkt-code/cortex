@@ -191,6 +191,12 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             "version": __version__,
             "pipeline_ver": cfg.pipeline_ver,
             "db": _db_status(cfg),
+            # Diagnóstico (sin secretos): ¿el proceso ve el proveedor de inferencia?
+            "inference": {
+                "configured": bool(cfg.inference_base_url and cfg.core_model),
+                "base_url_set": bool(cfg.inference_base_url),
+                "core_model_set": bool(cfg.core_model),
+            },
         }
 
     @app.post("/api/retrieve")
