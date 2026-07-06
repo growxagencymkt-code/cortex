@@ -21,10 +21,13 @@ def test_rebuild_reads_full_log_without_mutating_it(store: InMemoryEventStore) -
 
     report = rebuild_from_events(store)
     assert report.events_read == 7
-    # F0: las vistas quedan vacías por diseño, pero el mecanismo corre en verde.
-    assert report.relations_built == 0
-    assert report.chunks_built == 0
-    # El log no se tocó.
+    # F1: el rebuild construye el grafo. Los 7 mails comparten remitente/destinatario
+    # (alguien@externo.com → fundador@ejemplo.com), así que las entidades deduplican
+    # y las relaciones (emailed, member_of) se acumulan con su evidence_event.
+    assert report.entities_built >= 4  # 2 personas + 2 orgs por dominio
+    assert report.relations_built > 0
+    assert report.chunks_built == 0  # F2
+    # El log no se tocó (principio 1).
     assert store.count() == 7
 
 

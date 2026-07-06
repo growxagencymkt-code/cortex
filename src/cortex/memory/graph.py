@@ -170,6 +170,10 @@ class InMemoryGraph:
     def entities_by_kind(self, kind: str) -> list[EntityRecord]:
         return [rec for rec in self._entities.values() if rec.kind == kind]
 
+    def entities_all(self) -> list[EntityRecord]:
+        """Todas las entidades (orden de inserción). Simétrico a all_relations()."""
+        return list(self._entities.values())
+
     # ---------------------------------------------------------------- relations
     def add_relation(
         self,

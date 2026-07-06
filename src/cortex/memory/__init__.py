@@ -7,6 +7,13 @@ resolución/desambiguación de entidades. Todo en memoria (DB-agnóstico), espej
 
 from __future__ import annotations
 
+from cortex.memory.build import (
+    BuildResult,
+    BuildStats,
+    build_memory,
+    commitments_due_between,
+    process_event,
+)
 from cortex.memory.graph import EntityRecord, InMemoryGraph, RelationRecord
 from cortex.memory.resolution import (
     CONFIDENCE_THRESHOLD,
@@ -29,4 +36,9 @@ __all__ = [
     "DisambiguationQueue",
     "Embedder",
     "CONFIDENCE_THRESHOLD",
+    "build_memory",
+    "process_event",
+    "commitments_due_between",
+    "BuildResult",
+    "BuildStats",
 ]
