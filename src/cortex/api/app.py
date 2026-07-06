@@ -8,11 +8,13 @@ conversación, bandeja de decisiones y paneles. Se implementan en F2/F4.
 from __future__ import annotations
 
 from datetime import UTC, datetime
+from pathlib import Path
 from typing import Any
 
 import sqlalchemy as sa
 from fastapi import FastAPI, HTTPException
 from fastapi.responses import HTMLResponse
+from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
 
 from cortex import __version__
@@ -44,6 +46,13 @@ class ChatRequest(BaseModel):
     """Cuerpo de POST /api/chat."""
 
     query: str
+
+
+class DecideRequest(BaseModel):
+    """Cuerpo de POST /api/inbox/{card_id}/decide."""
+
+    choice: str
+    note: str = ""
 
 
 class IngestMeetingRequest(BaseModel):
@@ -153,9 +162,25 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     app = FastAPI(title="CORTEX", version=__version__)
     memory = MemoryService(cfg)
 
+    # Interfaz de operador (SPA compilada). Si hay build, la raíz sirve la app;
+    # si no, cae a la página de estado. Same-origin: la SPA llama /api/* y /health.
+    web_dist = Path(cfg.web_dist_dir)
+    spa_index = web_dist / "index.html"
+    spa_available = spa_index.is_file()
+    if spa_available and (web_dist / "assets").is_dir():
+        app.mount("/assets", StaticFiles(directory=str(web_dist / "assets")), name="assets")
+
     @app.get("/", response_class=HTMLResponse)
+    def root() -> HTMLResponse:
+        """Raíz: la SPA de operador (chat + bandeja + paneles) si está compilada,
+        o la página de estado on-brand como respaldo."""
+        if spa_available:
+            return HTMLResponse(content=spa_index.read_text(encoding="utf-8"))
+        return HTMLResponse(content=_STATUS_PAGE.replace("__VERSION__", __version__))
+
+    @app.get("/status", response_class=HTMLResponse)
     def status_page() -> HTMLResponse:
-        """Página de estado on-brand (la raíz cargaba 404; ahora muestra salud real)."""
+        """Página de estado on-brand con la salud real y la superficie de API."""
         return HTMLResponse(content=_STATUS_PAGE.replace("__VERSION__", __version__))
 
     @app.get("/health")
@@ -261,6 +286,33 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         box = build_decision_inbox(snap.memory, now=now, pipeline_ver=cfg.pipeline_ver)
         cards = [card_to_api(c) for c in box.pending()]
         return {"cards": cards, "count": len(cards)}
+
+    @app.post("/api/inbox/{card_id}/decide")
+    def decide(card_id: str, body: DecideRequest) -> dict[str, Any]:
+        """Registra la elección humana sobre una tarjeta (§11.2).
+
+        La decisión humana es fuente CONFIABLE de instrucción: se persiste como
+        evento append-only `source='human_ui'` (auditable, reconstruible). No muta
+        el log de negocio; agrega un evento nuevo (principio 1).
+        """
+        if body.choice not in ("approve", "edit", "reject"):
+            raise HTTPException(status_code=422, detail="choice inválida")
+        event = EventIn(
+            ts=datetime.now(tz=UTC),
+            source="human_ui",
+            type="human_decision",
+            external_id=None,
+            actor="founder",
+            payload={"card_id": card_id, "choice": body.choice, "note": body.note},
+            pipeline_ver=cfg.pipeline_ver,
+        )
+        try:
+            store = postgres_store_from_dsn(cfg.postgres_dsn)
+            store.append(event)
+        except Exception as exc:
+            raise HTTPException(status_code=503, detail=f"no se pudo registrar: {exc}") from exc
+        memory.invalidate()
+        return {"ok": True, "card_id": card_id, "choice": body.choice}
 
     @app.get("/api/panels/{panel_name}")
     def panels(panel_name: str) -> dict[str, Any]:

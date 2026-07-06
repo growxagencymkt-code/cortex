@@ -9,6 +9,8 @@ WORKDIR /app
 COPY pyproject.toml README.md alembic.ini ./
 COPY src ./src
 COPY migrations ./migrations
+# SPA de operador ya compilada (web/dist). La API la sirve same-origin en /.
+COPY web/dist ./web/dist
 
 RUN pip install .
 

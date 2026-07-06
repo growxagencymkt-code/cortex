@@ -74,6 +74,11 @@ class Settings(BaseSettings):
     api_host: str = "127.0.0.1"
     api_port: int = 8000
 
+    # Interfaz de operador (SPA compilada, §11). Ruta relativa al CWD del proceso
+    # (en el contenedor, /app → /app/web/dist). Si no existe, la raíz cae a la
+    # página de estado. Se sirve same-origin: la SPA llama /api/* y /health.
+    web_dist_dir: str = "web/dist"
+
 
 @lru_cache(maxsize=1)
 def get_settings() -> Settings:
