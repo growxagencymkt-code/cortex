@@ -1,0 +1,67 @@
+name: CI
+
+# Compuertas de calidad del SYSTEM_PROMPT: mypy --strict (§5), pytest y la
+# suite de inyección OBLIGATORIA (§9.4). Sin secretos: la inferencia paga no se
+# dispara en CI (regla de costo) — el extractor por defecto es determinista ($0).
+
+on:
+  push:
+    branches: [master, main]
+  pull_request:
+    branches: [master, main]
+
+jobs:
+  quality-gate:
+    runs-on: ubuntu-latest
+
+    # Postgres real (pgvector) para verificar migración + persistencia append-only.
+    services:
+      postgres:
+        image: pgvector/pgvector:pg16
+        env:
+          POSTGRES_USER: cortex
+          POSTGRES_PASSWORD: cortex
+          POSTGRES_DB: cortex
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U cortex -d cortex"
+          --health-interval 5s
+          --health-timeout 3s
+          --health-retries 12
+
+    env:
+      # DSN hacia el Postgres del runner. No es un secreto (base efímera de CI).
+      CORTEX_POSTGRES_DSN: postgresql+psycopg://cortex:cortex@localhost:5432/cortex
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Python 3.12
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install (editable + dev)
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install -e ".[dev]"
+
+      - name: Type check (mypy --strict, §5)
+        run: python -m mypy
+
+      - name: Apply migrations (esquema núcleo §6)
+        run: python -m alembic upgrade head
+
+      - name: Seed fixtures (ingesta idempotente)
+        run: |
+          python -m cortex.cli ingest --fixture tests/fixtures/sample_emails.jsonl
+          # Re-correr NO debe duplicar (criterio de aceptación F0).
+          python -m cortex.cli ingest --fixture tests/fixtures/sample_emails.jsonl
+          python -m cortex.cli rebuild --from-events
+
+      - name: Tests (incluye integración Postgres)
+        run: python -m pytest -q
+
+      - name: Suite de inyección OBLIGATORIA (§9.4)
+        run: python -m pytest -m injection -q
