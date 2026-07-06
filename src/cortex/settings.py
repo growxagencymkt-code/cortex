@@ -69,6 +69,12 @@ class Settings(BaseSettings):
     inference_api_key: str = ""  # se inyecta por entorno; NUNCA se commitea
     fast_model: str = ""  # extracción masiva / clasificación
     core_model: str = ""  # núcleo cognitivo / diseño de agentes / juez del simulador
+    # Acota latencia/costo de la generación. `inference_max_tokens=0` → sin techo.
+    inference_max_tokens: int = 0
+    # Campos extra del proveedor (JSON). Para un modelo de razonamiento como
+    # nemotron, desactivar el "thinking" hace la extracción JSON rápida y estable:
+    #   CORTEX_INFERENCE_EXTRA_BODY={"chat_template_kwargs":{"enable_thinking":false}}
+    inference_extra_body: str = ""
 
     # API interna
     api_host: str = "127.0.0.1"

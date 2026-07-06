@@ -253,38 +253,6 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         memory.invalidate()  # la memoria cacheada quedó obsoleta con el evento nuevo
         return {"inserted": True, "external_id": ext_id, "event_id": persisted.id}
 
-    @app.get("/api/_diag/inference")
-    def diag_inference() -> dict[str, Any]:
-        """Diagnóstico temporal: prueba el proveedor y devuelve el resultado/error
-        (sin secretos). Se remueve una vez resuelto."""
-        import time as _t
-
-        from cortex.memory.answer import PROMPT_VERSION, _load_prompt
-
-        client = build_inference_client(cfg, role="core")
-        out: dict[str, Any] = {"client": type(client).__name__}
-        system, user_template = _load_prompt(PROMPT_VERSION)
-        context = (
-            "Hechos del grafo:\n- Kickoff Proyecto Fenix —about→ Fenix [evento 1]\n"
-            "Fragmentos recuperados:\n- [fuente meetings evento 1] Decidimos avanzar con la opcion B."
-        )
-        user = user_template.format(query="Que se decidio sobre Fenix?", context=context)
-        t0 = _t.time()
-        try:
-            data = client.complete_json(system=system, user=user, purpose="diag")
-            out["ok"] = True
-            out["data"] = data
-        except Exception as exc:
-            msg = str(exc)
-            import re as _re
-
-            msg = _re.sub(r"nvapi-[A-Za-z0-9_-]+", "nvapi-REDACTED", msg)
-            out["ok"] = False
-            out["error_type"] = type(exc).__name__
-            out["error"] = msg[:400]
-        out["elapsed_s"] = round(_t.time() - t0, 1)
-        return out
-
     @app.post("/api/chat")
     def chat(body: ChatRequest) -> GroundedAnswer:
         """Superficie 11.1 — respuesta conversacional FUNDAMENTADA (§8, §11.1).

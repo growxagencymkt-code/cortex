@@ -100,6 +100,8 @@ class OpenAICompatibleInferenceClient:
         api_key: str = "",
         transport: HttpTransport | None = None,
         timeout: float = 60.0,
+        max_tokens: int | None = None,
+        extra_body: dict[str, Any] | None = None,
     ) -> None:
         if not base_url:
             raise ProviderNotConfigured("Falta base_url del proveedor de inferencia.")
@@ -110,6 +112,12 @@ class OpenAICompatibleInferenceClient:
         self._api_key = api_key
         self._transport: HttpTransport = transport or UrllibTransport()
         self._timeout = timeout
+        # `max_tokens` acota el largo (y la latencia). `extra_body` inyecta campos
+        # del proveedor (p.ej. desactivar el "thinking" de un modelo de razonamiento
+        # para tareas de extracción JSON, que serían lentas si razonan de más).
+        # Ambos vienen de configuración: el código sigue siendo API-agnóstico.
+        self._max_tokens = max_tokens
+        self._extra_body = dict(extra_body) if extra_body else {}
 
     def complete_json(self, *, system: str, user: str, purpose: str) -> dict[str, Any]:
         url = f"{self._base_url}/chat/completions"
@@ -125,6 +133,10 @@ class OpenAICompatibleInferenceClient:
             "temperature": 0,
             "response_format": {"type": "json_object"},
         }
+        if self._max_tokens:
+            body["max_tokens"] = self._max_tokens
+        if self._extra_body:
+            body.update(self._extra_body)
         response = self._transport.post_json(
             url, headers=headers, body=body, timeout=self._timeout
         )
@@ -177,9 +189,19 @@ def build_inference_client(
     model = cfg.core_model if role == "core" else cfg.fast_model
     if not cfg.inference_base_url or not model:
         return UnconfiguredInferenceClient()
+    extra_body: dict[str, Any] | None = None
+    if cfg.inference_extra_body:
+        try:
+            parsed = json.loads(cfg.inference_extra_body)
+        except json.JSONDecodeError:
+            parsed = None
+        if isinstance(parsed, dict):
+            extra_body = parsed
     return OpenAICompatibleInferenceClient(
         base_url=cfg.inference_base_url,
         model=model,
         api_key=cfg.inference_api_key,
         transport=transport,
+        max_tokens=cfg.inference_max_tokens or None,
+        extra_body=extra_body,
     )
