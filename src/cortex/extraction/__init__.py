@@ -16,6 +16,13 @@ from cortex.extraction.inference import (
     UnconfiguredInferenceClient,
 )
 from cortex.extraction.llm_extractor import LLMExtractor
+from cortex.extraction.providers import (
+    HttpTransport,
+    InferenceTransportError,
+    OpenAICompatibleInferenceClient,
+    UrllibTransport,
+    build_inference_client,
+)
 from cortex.extraction.models import (
     ExtractedCommitment,
     ExtractedDecision,
@@ -39,4 +46,9 @@ __all__ = [
     "UnconfiguredInferenceClient",
     "ProviderNotConfigured",
     "LLMExtractor",
+    "OpenAICompatibleInferenceClient",
+    "UrllibTransport",
+    "HttpTransport",
+    "InferenceTransportError",
+    "build_inference_client",
 ]

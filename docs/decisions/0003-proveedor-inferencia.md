@@ -1,8 +1,8 @@
-# ADR 0003 — Proveedor de inferencia: DECISIÓN DEL FUNDADOR (pendiente)
+# ADR 0003 — Proveedor de inferencia: seam API-agnóstico, NVIDIA elegido
 
-- Estado: Propuesta / BLOQUEANTE — requiere decisión del fundador
+- Estado: ACEPTADA (2026-07-05) — dirección del fundador vía AXIS
 - Fecha: 2026-07-05
-- Fase: F1 (se necesita antes de F1.1 / F3)
+- Fase: F1 (habilita F1.1 / F3)
 - Deriva de: SYSTEM_PROMPT sección 5; regla de costo del ecosistema.
 
 ## Contexto
@@ -29,17 +29,31 @@ como decisión del fundador en lugar de asumirla.
    costo y calidad, coherente con el "ruteo por costo" de la sección 5.
 
 ## Decisión
-PENDIENTE. Hasta que el fundador decida, ningún camino de código dispara
-inferencia paga: el `InferenceClient` por defecto (`UnconfiguredInferenceClient`)
-se niega a correr y el extractor por defecto es el determinista (ADR 0002). Los
-model IDs viven en configuración (`settings.py`), nunca hardcodeados.
+Se adopta un **cliente de inferencia API-agnóstico** que habla el protocolo
+`/chat/completions` de OpenAI (`OpenAICompatibleInferenceClient`, en
+`extraction/providers.py`). El **proveedor elegido es NVIDIA** (NIM,
+`https://integrate.api.nvidia.com/v1`); cambiar a Ollama local, vLLM u otro es
+sólo cambiar `CORTEX_INFERENCE_BASE_URL` + `CORTEX_*_MODEL` en configuración —
+cero cambios de código. Esto materializa la opción 3 (híbrido) del modo más
+flexible posible: un mismo seam sirve local-gratis y frontier-pago según qué
+`base_url`/`model` se configure por rol (`fast` vs `core`, ruteo por costo §5).
 
-Recomendación de FORGE: opción 3 (híbrido), arrancando con opción 1 (local gratis)
-para F1/F2 y reservando frontier pago para el juez del simulador en F3 si las
-compuertas no se alcanzan con local.
+Invariantes que se mantienen:
+- **Credenciales desde afuera, nunca en el repo.** `base_url`, `api_key` y model
+  IDs viven en entorno/`settings.py` (principio 9). El código no contiene ninguna
+  URL, key ni model id. La `nvapi-...` la inyecta el fundador en la PC destino.
+- **Regla de costo intacta.** Sin `CORTEX_INFERENCE_BASE_URL` (+ model del rol),
+  `build_inference_client()` devuelve `UnconfiguredInferenceClient` (se niega a
+  correr) y el extractor por defecto sigue siendo el determinista (ADR 0002). En
+  dev/CI, costo $0 por defecto: no hay ninguna llamada paga hasta que el fundador
+  configure el proveedor explícitamente.
 
 ## Consecuencias
-- El seam ya está construido: elegir proveedor es implementar UNA clase
-  `InferenceClient` y setear config; cero cambios en el pipeline.
-- Sin decisión, F1.1 (extractor LLM en vivo) y F3 (juez) quedan bloqueados en su
-  parte de inferencia — no el resto.
+- El seam está construido y probado sin red (transporte HTTP inyectable; ver
+  `tests/test_inference_provider.py`). Activar inferencia real es setear 3 env
+  vars; cero cambios en el pipeline.
+- F1.1 (extractor LLM en vivo) y F3 (juez del simulador) quedan **desbloqueados**
+  en su parte de inferencia: enchufan `build_inference_client(role=...)`.
+- Falta sólo la validación de calidad: confirmar que el modelo NVIDIA elegido
+  alcanza las compuertas del simulador (§9.3) antes de F3; si no, subir el `core`
+  a un modelo más grande — vía config, sin tocar código.

@@ -30,7 +30,10 @@ services:
       CORTEX_POSTGRES_DSN: postgresql+psycopg://${POSTGRES_USER:-cortex}:${POSTGRES_PASSWORD:-cortex}@postgres:5432/${POSTGRES_DB:-cortex}
       CORTEX_PIPELINE_VER: ${CORTEX_PIPELINE_VER:-0.1.0}
       CORTEX_EMBEDDING_DIM: ${CORTEX_EMBEDDING_DIM:-1024}
-      CORTEX_ANTHROPIC_API_KEY: ${CORTEX_ANTHROPIC_API_KEY:-}
+      # Inferencia API-agnóstica (OpenAI-compatible: NVIDIA NIM, Ollama, ...).
+      # Las credenciales se inyectan por entorno; nunca viven en el repo.
+      CORTEX_INFERENCE_BASE_URL: ${CORTEX_INFERENCE_BASE_URL:-}
+      CORTEX_INFERENCE_API_KEY: ${CORTEX_INFERENCE_API_KEY:-}
       CORTEX_FAST_MODEL: ${CORTEX_FAST_MODEL:-}
       CORTEX_CORE_MODEL: ${CORTEX_CORE_MODEL:-}
       CORTEX_EMBED_MODEL: ${CORTEX_EMBED_MODEL:-}
