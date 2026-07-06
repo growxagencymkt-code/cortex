@@ -26,7 +26,7 @@ def test_rebuild_reads_full_log_without_mutating_it(store: InMemoryEventStore) -
     # y las relaciones (emailed, member_of) se acumulan con su evidence_event.
     assert report.entities_built >= 4  # 2 personas + 2 orgs por dominio
     assert report.relations_built > 0
-    assert report.chunks_built == 0  # F2
+    assert report.chunks_built > 0  # F2: el índice semántico se construye en el rebuild
     # El log no se tocó (principio 1).
     assert store.count() == 7
 

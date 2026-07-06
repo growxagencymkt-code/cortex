@@ -43,7 +43,7 @@ def rebuild_from_events(store: EventStore, extractor: Extractor | None = None) -
         events_read=stats.events_read,
         entities_built=stats.entities_built,
         relations_built=stats.relations_built,
-        chunks_built=0,
+        chunks_built=stats.chunks_built,
         process_cases_built=0,
         disambiguations_pending=stats.disambiguations_pending,
     )

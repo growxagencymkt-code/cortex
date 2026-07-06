@@ -33,6 +33,17 @@ def test_root_serves_status_page() -> None:
     assert "CORTEX" in response.text or "COR" in response.text
 
 
+def test_retrieve_rejects_empty_query() -> None:
+    # 422 antes de tocar la base: validación de entrada.
+    assert _client().post("/api/retrieve", json={"query": "   "}).status_code == 422
+
+
+def test_retrieve_degrades_gracefully_without_db() -> None:
+    # Sin Postgres alcanzable, la memoria no está disponible → 503 (no 500).
+    resp = _client().post("/api/retrieve", json={"query": "presupuesto"})
+    assert resp.status_code == 503
+
+
 def test_placeholder_surfaces_return_501() -> None:
     client = _client()
     assert client.post("/api/chat").status_code == 501

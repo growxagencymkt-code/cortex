@@ -29,6 +29,9 @@ from cortex.events.models import Event
 from cortex.events.store import EventStore
 from cortex.extraction.extractor import DeterministicExtractor, Extractor
 from cortex.extraction.models import ExtractedEntity
+from cortex.memory.chunking import chunks_for_event
+from cortex.memory.chunks import InMemoryChunkIndex
+from cortex.memory.embeddings import Embedder, HashingEmbedder, build_embedder
 from cortex.memory.graph import InMemoryGraph
 from cortex.memory.resolution import (
     DisambiguationQueue,
@@ -54,16 +57,20 @@ class BuildStats:
     entities_built: int = 0
     relations_built: int = 0
     commitments_built: int = 0
+    chunks_built: int = 0
     disambiguations_pending: int = 0
 
 
 @dataclass
 class BuildResult:
-    """Resultado de construir la memoria: el grafo, la bandeja y las estadísticas."""
+    """Resultado de construir la memoria: el grafo, el índice semántico, la
+    bandeja y las estadísticas."""
 
     graph: InMemoryGraph
     disambiguation_queue: DisambiguationQueue
     stats: BuildStats = field(default_factory=BuildStats)
+    chunk_index: InMemoryChunkIndex = field(default_factory=InMemoryChunkIndex)
+    embedder: Embedder = field(default_factory=HashingEmbedder)
 
 
 def _commitment_key(who: str, what: str, due: date | None) -> str:
@@ -150,19 +157,44 @@ def process_event(event: Event, result_extractor: Extractor, build: BuildResult)
             build.stats.relations_built += 1
         build.stats.commitments_built += 1
 
+    # Índice semántico (§7 paso 6): trocear el texto del evento, embeber cada
+    # chunk y etiquetarlo con las entidades resueltas en ESTE evento (para el
+    # filtrado del retrieval híbrido, §8). Costo $0 con el HashingEmbedder.
+    event_entity_ids = [eid for eid in cache.values() if eid is not None]
+    pieces = chunks_for_event(event)
+    if pieces:
+        vectors = build.embedder.embed(pieces)
+        for text, vector in zip(pieces, vectors):
+            build.chunk_index.add(
+                event_id=event.id,
+                text=text,
+                embedding=vector,
+                embed_model=build.embedder.model,
+                entity_ids=event_entity_ids,
+            )
+            build.stats.chunks_built += 1
+
     build.stats.entities_built = len(graph.entities_all())
 
 
-def build_memory(store: EventStore, extractor: Extractor | None = None) -> BuildResult:
-    """Reconstruye la memoria de grafo leyendo el log completo en orden.
+def build_memory(
+    store: EventStore,
+    extractor: Extractor | None = None,
+    *,
+    embedder: Embedder | None = None,
+) -> BuildResult:
+    """Reconstruye la memoria (grafo + índice semántico) leyendo el log en orden.
 
     Determinista y sin efectos sobre el log. El extractor por defecto es el
-    determinista (costo $0). Devuelve el grafo, la bandeja de desambiguación y
-    las estadísticas.
+    determinista y el embedder por defecto es el Hashing (costo $0 ambos).
+    Devuelve el grafo, el índice de chunks, la bandeja y las estadísticas.
     """
     ext = extractor if extractor is not None else DeterministicExtractor()
+    emb = embedder if embedder is not None else build_embedder()
     graph = InMemoryGraph(exclusive_rels=EXCLUSIVE_RELS)
-    build = BuildResult(graph=graph, disambiguation_queue=DisambiguationQueue(graph))
+    build = BuildResult(
+        graph=graph, disambiguation_queue=DisambiguationQueue(graph), embedder=emb
+    )
     for event in store.all_events():
         build.stats.events_read += 1
         process_event(event, ext, build)

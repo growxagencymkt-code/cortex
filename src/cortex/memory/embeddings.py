@@ -50,8 +50,14 @@ def cosine(a: list[float], b: list[float]) -> float:
     return dot / (na * nb)
 
 
-def _tokens(text: str) -> list[str]:
+def tokenize(text: str) -> list[str]:
+    """Tokens en minúscula (letras/dígitos). Compartido por el embedder léxico y
+    el anclaje léxico del retrieval."""
     return [t.lower() for t in _TOKEN_RE.findall(text)]
+
+
+# Alias interno histórico.
+_tokens = tokenize
 
 
 class Embedder(Protocol):
@@ -61,6 +67,11 @@ class Embedder(Protocol):
     def model(self) -> str: ...
     @property
     def dim(self) -> int: ...
+    @property
+    def is_lexical(self) -> bool:
+        """True si la similitud es léxica (baseline) y conviene anclarla a tokens
+        compartidos en el retrieval; False para embeddings semánticos reales."""
+        ...
     def embed(self, texts: list[str]) -> list[list[float]]: ...
 
 
@@ -75,6 +86,10 @@ class UnconfiguredEmbedder:
     @property
     def dim(self) -> int:
         return 0
+
+    @property
+    def is_lexical(self) -> bool:
+        return False
 
     def embed(self, texts: list[str]) -> list[list[float]]:
         raise InferenceTransportError(
@@ -105,6 +120,10 @@ class HashingEmbedder:
     @property
     def dim(self) -> int:
         return self._dim
+
+    @property
+    def is_lexical(self) -> bool:
+        return True  # feature hashing → similitud léxica; anclar a tokens en retrieval
 
     def _bucket_and_sign(self, feature: str) -> tuple[int, float]:
         digest = hashlib.blake2b(feature.encode("utf-8"), digest_size=8).digest()
@@ -162,6 +181,10 @@ class OpenAICompatibleEmbedder:
     @property
     def dim(self) -> int:
         return self._dim
+
+    @property
+    def is_lexical(self) -> bool:
+        return False  # embeddings semánticos reales: no filtrar por tokens
 
     def embed(self, texts: list[str]) -> list[list[float]]:
         if not texts:

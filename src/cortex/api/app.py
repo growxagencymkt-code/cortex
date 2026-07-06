@@ -12,9 +12,18 @@ from typing import Any
 import sqlalchemy as sa
 from fastapi import FastAPI, HTTPException
 from fastapi.responses import HTMLResponse
+from pydantic import BaseModel
 
 from cortex import __version__
+from cortex.events.store import postgres_store_from_dsn
+from cortex.memory.retrieval import RetrievalResult, answer_query
 from cortex.settings import Settings, get_settings
+
+
+class RetrieveRequest(BaseModel):
+    """Cuerpo de POST /api/retrieve."""
+
+    query: str
 
 _NOT_IMPLEMENTED = "Aún no implementado en F0 (ver docs/SYSTEM_PROMPT.md, sección 13)."
 
@@ -118,9 +127,31 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             "db": _db_status(cfg),
         }
 
+    @app.post("/api/retrieve")
+    def retrieve_endpoint(body: RetrieveRequest) -> RetrievalResult:
+        """Superficie 11.1 (F2) — recuperación híbrida fundamentada (§8).
+
+        Reconstruye la memoria desde el log y devuelve hechos (con evidencia) +
+        chunks (con fuente/fecha). No genera lenguaje (eso es el núcleo con un
+        proveedor): entrega el CONTEXTO fundamentado, costo $0. Sin evidencia,
+        `answerable=False` y dice que no sabe.
+        """
+        query = body.query.strip()
+        if not query:
+            raise HTTPException(status_code=422, detail="query vacía")
+        try:
+            store = postgres_store_from_dsn(cfg.postgres_dsn)
+            return answer_query(store, query)
+        except HTTPException:
+            raise
+        except Exception as exc:  # p.ej. Postgres no disponible
+            raise HTTPException(
+                status_code=503, detail=f"memoria no disponible: {exc}"
+            ) from exc
+
     @app.post("/api/chat", status_code=501)
     def chat_placeholder() -> dict[str, str]:
-        """Superficie 11.1 — conversación sobre la memoria (F2)."""
+        """Superficie 11.1 — generación conversacional (necesita proveedor; F2.1)."""
         raise HTTPException(status_code=501, detail=_NOT_IMPLEMENTED)
 
     @app.get("/api/inbox", status_code=501)
