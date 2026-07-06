@@ -253,6 +253,34 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         memory.invalidate()  # la memoria cacheada quedó obsoleta con el evento nuevo
         return {"inserted": True, "external_id": ext_id, "event_id": persisted.id}
 
+    @app.get("/api/_diag/inference")
+    def diag_inference() -> dict[str, Any]:
+        """Diagnóstico temporal: prueba el proveedor y devuelve el resultado/error
+        (sin secretos). Se remueve una vez resuelto."""
+        import time as _t
+
+        client = build_inference_client(cfg, role="core")
+        out: dict[str, Any] = {"client": type(client).__name__}
+        t0 = _t.time()
+        try:
+            data = client.complete_json(
+                system="Responde SOLO JSON.",
+                user='Devolve exactamente {"ok": true}',
+                purpose="diag",
+            )
+            out["ok"] = True
+            out["data"] = data
+        except Exception as exc:
+            msg = str(exc)
+            import re as _re
+
+            msg = _re.sub(r"nvapi-[A-Za-z0-9_-]+", "nvapi-REDACTED", msg)
+            out["ok"] = False
+            out["error_type"] = type(exc).__name__
+            out["error"] = msg[:400]
+        out["elapsed_s"] = round(_t.time() - t0, 1)
+        return out
+
     @app.post("/api/chat")
     def chat(body: ChatRequest) -> GroundedAnswer:
         """Superficie 11.1 — respuesta conversacional FUNDAMENTADA (§8, §11.1).
