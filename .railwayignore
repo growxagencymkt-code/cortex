@@ -1,0 +1,17 @@
+# Secretos y entorno local — NUNCA al contexto de build.
+.env
+.env.*
+!.env.example
+# Virtualenvs y caches.
+.venv
+__pycache__/
+*.pyc
+.mypy_cache/
+.pytest_cache/
+.ruff_cache/
+# Git y CI.
+.git
+.github
+# Datos y colas locales.
+data/
+*.jsonl
