@@ -33,7 +33,10 @@ cortex = "cortex.cli:main"
 where = ["src"]
 
 [tool.setuptools.package-data]
-cortex = ["py.typed"]
+# py.typed + los prompts versionados en disco (§12). Sin esto, `pip install`
+# los deja afuera del wheel y _load_prompt falla en producción (chat, extractor
+# LLM, juez del simulador, agentes).
+cortex = ["py.typed", "**/prompts/*.md"]
 
 [tool.mypy]
 strict = true

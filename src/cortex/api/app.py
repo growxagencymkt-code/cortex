@@ -272,15 +272,9 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         inference = build_inference_client(cfg, role="core")
         try:
             return answer_from_retrieval(retrieval, inference=inference)
-        except Exception as exc:
+        except Exception:
             # El proveedor falló (red/timeout): degradá a extractivo, nunca 500.
-            import re as _re
-
-            fallback = answer_from_retrieval(retrieval, inference=None)
-            emsg = _re.sub(r"nvapi-[A-Za-z0-9_-]+", "nvapi-REDACTED", str(exc))[:300]
-            return fallback.model_copy(
-                update={"note": f"{fallback.note} [llm_err {type(exc).__name__}: {emsg}]"}
-            )
+            return answer_from_retrieval(retrieval, inference=None)
 
     @app.get("/api/inbox")
     def inbox() -> dict[str, Any]:
