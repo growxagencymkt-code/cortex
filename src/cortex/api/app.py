@@ -11,11 +11,78 @@ from typing import Any
 
 import sqlalchemy as sa
 from fastapi import FastAPI, HTTPException
+from fastapi.responses import HTMLResponse
 
 from cortex import __version__
 from cortex.settings import Settings, get_settings
 
 _NOT_IMPLEMENTED = "Aún no implementado en F0 (ver docs/SYSTEM_PROMPT.md, sección 13)."
+
+# Página de estado (raíz). CORTEX en F0/F1 es un backend: la interfaz de operador
+# (chat + bandeja + paneles, §11) es F2/F4. Esta página muestra estado real y la
+# superficie de API viva, para que la URL cargue algo honesto y on-brand.
+_STATUS_PAGE = """<!doctype html>
+<html lang="es"><head><meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>CORTEX — Estado del sistema</title>
+<style>
+  :root{--navy:#0B3A4A;--blue:#2D82A9;--cyan:#37B6C7;--green:#64B26A;--gold:#F2B541;--light:#BFEFF0;--gray:#8D9AA0}
+  *{box-sizing:border-box;margin:0;padding:0}
+  body{font-family:'Segoe UI',system-ui,-apple-system,sans-serif;background:radial-gradient(1200px 600px at 70% -10%,#0f4a5e,#08222c 60%);color:#eaf6f8;min-height:100vh;padding:clamp(20px,5vw,64px);display:flex;flex-direction:column;align-items:center}
+  .wrap{width:100%;max-width:860px}
+  .brand{display:flex;align-items:center;gap:14px;margin-bottom:6px}
+  .dot{width:14px;height:14px;border-radius:50%;background:var(--gray);box-shadow:0 0 0 4px rgba(255,255,255,.05)}
+  .dot.ok{background:var(--green);box-shadow:0 0 16px var(--green)}
+  .dot.bad{background:#e06a5a;box-shadow:0 0 16px #e06a5a}
+  h1{font-size:clamp(28px,6vw,44px);letter-spacing:.18em;font-weight:700}
+  h1 span{color:var(--gold)}
+  .sub{color:var(--light);opacity:.85;margin:2px 0 28px;font-size:15px}
+  .grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(180px,1fr));gap:14px;margin-bottom:28px}
+  .card{background:rgba(255,255,255,.045);border:1px solid rgba(255,255,255,.08);border-radius:14px;padding:18px 20px}
+  .card .k{font-size:12px;text-transform:uppercase;letter-spacing:.12em;color:var(--gray)}
+  .card .v{font-size:22px;font-weight:600;margin-top:6px;color:#fff}
+  .card .v.ok{color:var(--green)} .card .v.bad{color:#e06a5a}
+  .phase{background:linear-gradient(90deg,rgba(242,181,65,.12),rgba(55,182,199,.06));border:1px solid rgba(242,181,65,.25);border-radius:14px;padding:18px 20px;margin-bottom:28px}
+  .phase b{color:var(--gold)}
+  .api{background:rgba(0,0,0,.18);border:1px solid rgba(255,255,255,.07);border-radius:14px;overflow:hidden}
+  .api .row{display:flex;align-items:center;gap:12px;padding:13px 18px;border-top:1px solid rgba(255,255,255,.05);font-size:14px}
+  .api .row:first-child{border-top:none}
+  .m{font:600 11px/1 ui-monospace,monospace;padding:4px 8px;border-radius:6px;background:var(--navy);color:var(--cyan);border:1px solid rgba(55,182,199,.3)}
+  .p{font-family:ui-monospace,monospace;color:#dfeef1;flex:1}
+  .st{font-size:12px;color:var(--gray)} .st.live{color:var(--green)}
+  footer{margin-top:32px;color:var(--gray);font-size:12px;letter-spacing:.1em}
+</style></head>
+<body><div class="wrap">
+  <div class="brand"><span id="dot" class="dot"></span><h1>COR<span>TEX</span></h1></div>
+  <div class="sub">Cerebro operativo agentivo · event sourcing + memoria organizacional + simulador</div>
+  <div class="grid">
+    <div class="card"><div class="k">Estado</div><div class="v" id="status">…</div></div>
+    <div class="card"><div class="k">Versión</div><div class="v" id="version">…</div></div>
+    <div class="card"><div class="k">Pipeline</div><div class="v" id="pipe">…</div></div>
+    <div class="card"><div class="k">Base de datos</div><div class="v" id="db">…</div></div>
+  </div>
+  <div class="phase">Fase actual <b>F0/F1</b> — backend vivo (log de eventos, memoria con evidencia, API de salud).
+  La interfaz de operador (chat, bandeja de decisiones y paneles — §11) llega en <b>F2/F4</b>.</div>
+  <div class="api">
+    <div class="row"><span class="m">GET</span><span class="p">/health</span><span class="st live">vivo</span></div>
+    <div class="row"><span class="m">POST</span><span class="p">/api/chat</span><span class="st">F2 · 501</span></div>
+    <div class="row"><span class="m">GET</span><span class="p">/api/inbox</span><span class="st">F4 · 501</span></div>
+    <div class="row"><span class="m">GET</span><span class="p">/api/panels/{'{'}panel{'}'}</span><span class="st">F2/F4 · 501</span></div>
+    <div class="row"><span class="m">GET</span><span class="p">/docs</span><span class="st live">OpenAPI</span></div>
+  </div>
+  <footer>GROWX · CORTEX v__VERSION__</footer>
+</div>
+<script>
+  fetch('/health').then(r=>r.json()).then(d=>{
+    const ok=d.status==='ok';
+    document.getElementById('dot').className='dot '+(ok?'ok':'bad');
+    const s=document.getElementById('status');s.textContent=ok?'Operativo':'Degradado';s.className='v '+(ok?'ok':'bad');
+    document.getElementById('version').textContent=d.version||'—';
+    document.getElementById('pipe').textContent=d.pipeline_ver||'—';
+    const db=document.getElementById('db');db.textContent=d.db==='ok'?'Conectada':'Sin conexión';db.className='v '+(d.db==='ok'?'ok':'bad');
+  }).catch(()=>{document.getElementById('status').textContent='Sin respuesta';});
+</script>
+</body></html>"""
 
 
 def _db_status(settings: Settings) -> str:
@@ -35,6 +102,11 @@ def _db_status(settings: Settings) -> str:
 def create_app(settings: Settings | None = None) -> FastAPI:
     cfg = settings if settings is not None else get_settings()
     app = FastAPI(title="CORTEX", version=__version__)
+
+    @app.get("/", response_class=HTMLResponse)
+    def status_page() -> HTMLResponse:
+        """Página de estado on-brand (la raíz cargaba 404; ahora muestra salud real)."""
+        return HTMLResponse(content=_STATUS_PAGE.replace("__VERSION__", __version__))
 
     @app.get("/health")
     def health() -> dict[str, Any]:
